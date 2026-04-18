@@ -183,17 +183,17 @@ function subsetRowsForRange(rows, dateKey, startTime, endTime) {
   if (!result.length) {
     const prev = [...rows].reverse().find((r) => new Date(r.timestamp) < start);
     const next = rows.find((r) => new Date(r.timestamp) > end);
-    if (prev) result.push({ ...prev, timestamp: start.toISOString() });
-    if (next) result.push({ ...next, timestamp: end.toISOString() });
+    if (prev) result.push({ ...prev, timestamp: start.toISOString(), synthetic: true });
+    if (next) result.push({ ...next, timestamp: end.toISOString(), synthetic: true });
   } else {
     const first = result[0];
     const last = result[result.length - 1];
     if (new Date(first.timestamp) > start) {
       const prev = [...rows].reverse().find((r) => new Date(r.timestamp) < start);
-      if (prev) result.unshift({ ...prev, timestamp: start.toISOString() });
+      if (prev) result.unshift({ ...prev, timestamp: start.toISOString(), synthetic: true });
     }
     if (new Date(last.timestamp) < end) {
-      result.push({ ...last, timestamp: end.toISOString() });
+      result.push({ ...last, timestamp: end.toISOString(), synthetic: true });
     }
   }
 
@@ -295,7 +295,6 @@ function analyze(rows, significantChange, tankHeightCm) {
         lastReadingAt: null,
         biggestIntervalDrop: { percent: 0, from: null, to: null, minutes: 0 }
       },
-      rates: [],
       hourlyUsage: new Array(24).fill(0),
       gapStats: emptyGap,
       events: { consumes: [], fills: [] },
@@ -303,8 +302,11 @@ function analyze(rows, significantChange, tankHeightCm) {
     };
   }
 
-  let minLevel = rows[0].levelPercent;
-  let maxLevel = rows[0].levelPercent;
+  const realRows = rows.filter((r) => !r.synthetic);
+  const series = realRows.length ? realRows : rows;
+
+  let minLevel = series[0].levelPercent;
+  let maxLevel = series[0].levelPercent;
   let levelTotal = 0;
   let totalFill = 0;
   let totalUse = 0;
@@ -317,20 +319,18 @@ function analyze(rows, significantChange, tankHeightCm) {
   let biggestDrop = { delta: 0, at: null };
   let biggestRise = { delta: 0, at: null };
   let biggestIntervalDrop = { percent: 0, from: null, to: null, minutes: 0 };
-  const rates = [{ rate: 0, at: rows[0].timestamp }];
 
-  for (let i = 0; i < rows.length; i += 1) {
-    const current = rows[i];
+  for (let i = 0; i < series.length; i += 1) {
+    const current = series[i];
     minLevel = Math.min(minLevel, current.levelPercent);
     maxLevel = Math.max(maxLevel, current.levelPercent);
     levelTotal += current.levelPercent;
 
     if (i === 0) continue;
 
-    const prev = rows[i - 1];
+    const prev = series[i - 1];
     const delta = current.levelPercent - prev.levelPercent;
     const mins = Math.max((new Date(current.timestamp) - new Date(prev.timestamp)) / 60000, 0.01);
-    rates.push({ rate: delta / mins, at: current.timestamp });
 
     if (delta < -0.02) {
       consumes.push({
@@ -376,29 +376,29 @@ function analyze(rows, significantChange, tankHeightCm) {
     }
   }
 
-  const gapStats = computeGaps(rows);
-  const cumulative = buildCumulativeSeries(rows);
+  const gapStats = computeGaps(series);
+  const cumulative = buildCumulativeSeries(series);
 
+  const last = series[series.length - 1];
   return {
     summary: {
       minLevel,
       maxLevel,
-      avgLevel: levelTotal / rows.length,
-      samples: rows.length,
+      avgLevel: levelTotal / series.length,
+      samples: series.length,
       totalFill,
       totalUse,
       totalFillCm: (totalFill / 100) * tankHeightCm,
       totalUseCm: (totalUse / 100) * tankHeightCm,
-      waterNowCm: (rows[rows.length - 1].levelPercent / 100) * tankHeightCm,
+      waterNowCm: (last.levelPercent / 100) * tankHeightCm,
       fillEvents,
       mostConsumedAt: biggestDrop.at,
       mostFilledAt: biggestRise.at,
-      lastReadingAt: rows[rows.length - 1].timestamp,
-      currentLevelPct: rows[rows.length - 1].levelPercent,
-      currentDistanceCm: rows[rows.length - 1].distanceCm,
+      lastReadingAt: last.timestamp,
+      currentLevelPct: last.levelPercent,
+      currentDistanceCm: last.distanceCm,
       biggestIntervalDrop
     },
-    rates,
     hourlyUsage,
     gapStats,
     events: { consumes, fills },
@@ -496,12 +496,18 @@ function createOrUpdateChart(chartRef, targetId, config) {
   return new Chart(ctx, config);
 }
 
-function renderCharts(rows, rates, smoothingWindow, gapStats) {
+function renderCharts(rows, smoothingWindow, gapStats) {
   const col = chartColors();
   const labels = rows.map((row) => formatTime(row.timestamp));
   const levels = rows.map((row) => row.levelPercent);
   const smoothLevels = movingAverage(levels, smoothingWindow);
-  const rateData = rates.map((r) => r.rate);
+  const rateData = rows.map((row, i) => {
+    if (i === 0) return 0;
+    const prev = rows[i - 1];
+    const delta = row.levelPercent - prev.levelPercent;
+    const mins = Math.max((new Date(row.timestamp) - new Date(prev.timestamp)) / 60000, 0.01);
+    return delta / mins;
+  });
   const distances = rows.map((row) => row.distanceCm);
   const gapLabels = gapStats.gaps.map((g) => formatTime(g.at));
   const gapMinutes = gapStats.gaps.map((g) => g.minutes);
@@ -1018,6 +1024,10 @@ async function refreshReport() {
   const device = devicesPayload?.[deviceId];
   if (!device) {
     refs.statusText.textContent = "No device data loaded.";
+    refs.kpiStrip.innerHTML = "";
+    refs.insightList.innerHTML = "<li>No device data loaded.</li>";
+    refs.sparseNote.hidden = true;
+    destroyCharts();
     return;
   }
 
@@ -1036,6 +1046,10 @@ async function refreshReport() {
     const selectedDates = buildSelectedDateList(mode, dateKey, fromDate, toDate);
     if (!selectedDates.length) {
       refs.statusText.textContent = "No dates in history for this range.";
+      refs.kpiStrip.innerHTML = "";
+      refs.insightList.innerHTML = "<li>No dates in history for this range.</li>";
+      refs.sparseNote.hidden = true;
+      destroyCharts();
       return;
     }
 
@@ -1055,7 +1069,7 @@ async function refreshReport() {
       return;
     }
 
-    const { summary, rates, hourlyUsage, gapStats, events, cumulative } = analyze(rows, threshold, tankHeightCm);
+    const { summary, hourlyUsage, gapStats, events, cumulative } = analyze(rows, threshold, tankHeightCm);
     const dateCaption =
       mode === "single"
         ? formatDateKey(dateKey)
@@ -1063,16 +1077,20 @@ async function refreshReport() {
 
     renderKpiStrip(summary, dateCaption, startTime, endTime, gapStats);
     renderInsights(summary, dateCaption, gapStats, tankHeightCm, events);
-    renderCharts(rows, rates, smoothingWindow, gapStats);
+    renderCharts(rows, smoothingWindow, gapStats);
     renderHourlyChart(hourlyUsage);
     renderActivityPie(summary);
     renderTopEventsCharts(events);
     renderCumulativeChart(cumulative);
     updateGraphVisibility();
 
-    refs.statusText.textContent = `${rows.length} samples · device ${deviceId} · last ${formatDateTime(summary.lastReadingAt)}`;
+    refs.statusText.textContent = `${summary.samples} samples · device ${deviceId} · last ${formatDateTime(summary.lastReadingAt)}`;
   } catch (err) {
     refs.statusText.textContent = `Report error: ${err.message}`;
+    refs.kpiStrip.innerHTML = "";
+    refs.insightList.innerHTML = `<li>Report could not be built: ${escapeHtml(err.message)}</li>`;
+    refs.sparseNote.hidden = true;
+    destroyCharts();
   }
 }
 
