@@ -153,5 +153,4 @@ flowchart LR
 - **115200 baud** — boot banner, WiFi status, sensor readings, Firebase response codes, OTA logs.
 
 ## License / project
-
-Adjust this section for your team’s license and repository layout.
+- ----
