@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en" data-theme="ocean">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Water Tank Monitor — Reports</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,500&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body class="wtm-body">
+  <nav class="navbar navbar-expand-lg navbar-wtm border-bottom sticky-top">
+    <div class="container-fluid px-3 px-lg-4">
+      <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="#">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span>Tank Reports</span>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navMain">
+        <div class="navbar-nav ms-auto align-items-lg-center gap-lg-2 flex-wrap py-2 py-lg-0">
+          <label class="d-flex align-items-center gap-2 small text-wtm-muted mb-0">
+            <span class="d-none d-sm-inline">Theme</span>
+            <select id="themeSelect" class="form-select form-select-sm wtm-select-sm" aria-label="Color theme">
+              <option value="ocean">Ocean</option>
+              <option value="aurora">Aurora</option>
+              <option value="slate">Slate</option>
+              <option value="paper">Paper</option>
+            </select>
+          </label>
+          <button type="button" class="btn btn-wtm-primary btn-sm" data-bs-toggle="offcanvas" data-bs-target="#adminPanel" aria-controls="adminPanel">Admin</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container-fluid px-3 px-lg-4 py-3 py-lg-4">
+    <header class="mb-3 mb-lg-4">
+      <h1 class="h3 fw-bold mb-1">Water level analytics</h1>
+      <p class="text-wtm-tagline mb-0 small">Multi-device dashboard live from Firebase Realtime Database. Readings appear only when the level changes—reports highlight gaps, consumption windows, and current state.</p>
+    </header>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-xl-4">
+        <div class="card card-wtm h-100">
+          <div class="card-body">
+            <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-3">Device</h2>
+            <label for="deviceSelect" class="form-label small">Active device</label>
+            <select id="deviceSelect" class="form-select form-select-lg mb-3" aria-describedby="deviceHelp"></select>
+            <p id="deviceHelp" class="small text-wtm-muted mb-3">Choose a device from your allowlist (Admin). Data is loaded from your Firebase Realtime Database URL (see Admin).</p>
+            <div class="d-grid gap-2">
+              <button type="button" id="syncDevicesBtn" class="btn btn-wtm-primary">Sync devices from Firebase</button>
+              <button type="button" id="refreshBtn" class="btn btn-wtm-accent">Refresh report</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-xl-8">
+        <div class="card card-wtm h-100">
+          <div class="card-body">
+            <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-3">Report range</h2>
+            <div class="row g-2 g-md-3">
+              <div class="col-12 col-sm-6 col-md-4">
+                <label for="reportMode" class="form-label small">Report type</label>
+                <select id="reportMode" class="form-select">
+                  <option value="single" selected>Single date</option>
+                  <option value="week">Last 7 days (known)</option>
+                  <option value="custom">Custom range</option>
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-4 mode-single">
+                <label for="dateSelect" class="form-label small">Date</label>
+                <select id="dateSelect" class="form-select"></select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-4 mode-custom">
+                <label for="fromDate" class="form-label small">From</label>
+                <select id="fromDate" class="form-select"></select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-4 mode-custom">
+                <label for="toDate" class="form-label small">To</label>
+                <select id="toDate" class="form-select"></select>
+              </div>
+              <div class="col-6 col-md-4">
+                <label for="changeThreshold" class="form-label small">Fill / change threshold (%)</label>
+                <input id="changeThreshold" type="number" min="0.1" max="100" step="0.1" value="2" class="form-control">
+              </div>
+              <div class="col-6 col-md-4">
+                <label for="windowSize" class="form-label small">Smoothing</label>
+                <select id="windowSize" class="form-select">
+                  <option value="1">Raw</option>
+                  <option value="3" selected>3-point</option>
+                  <option value="5">5-point</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-4">
+                <label for="startTime" class="form-label small">Day start</label>
+                <input id="startTime" type="time" value="00:00" class="form-control">
+              </div>
+              <div class="col-6 col-md-4">
+                <label for="endTime" class="form-label small">Day end</label>
+                <input id="endTime" type="time" value="23:59" class="form-control">
+              </div>
+              <div class="col-12 col-md-8">
+                <label for="chartType" class="form-label small">Chart</label>
+                <select id="chartType" class="form-select">
+                  <option value="level" selected>Level (stepped — holds between samples)</option>
+                  <option value="distance">Distance to surface (cm)</option>
+                  <option value="rate">Change rate (% / min)</option>
+                  <option value="hourly">Hourly consumption</option>
+                  <option value="gaps">Intervals between uploads</option>
+                  <option value="pie">Activity split</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="nav nav-tabs nav-wtm mb-3" id="mainTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-overview-btn" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-device-btn" data-bs-toggle="tab" data-bs-target="#tab-device" type="button" role="tab">Device details</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-logs-btn" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">Logs</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-errors-btn" data-bs-toggle="tab" data-bs-target="#tab-errors" type="button" role="tab">Errors</button>
+      </li>
+    </ul>
+
+    <div class="tab-content" id="mainTabContent">
+      <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+        <div class="alert alert-wtm-info small mb-2 mb-md-3" id="sparseNote" role="status" hidden></div>
+        <div id="kpiStrip" class="mb-2 mb-md-3" aria-label="Report summary"></div>
+
+        <section class="chart-hero-wrap mb-3" aria-label="Selected chart">
+          <div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-2">
+            <h2 class="h5 fw-bold text-wtm-strong mb-0" id="heroChartHeading">Water level (%)</h2>
+            <span class="small text-wtm-soft">Use the Chart control in Report range to switch this view.</span>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart" id="panel-level">
+            <div class="card-body">
+              <div class="chart-wrap chart-wrap-hero"><canvas id="levelChart"></canvas></div>
+            </div>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-distance">
+            <div class="card-body">
+              <p class="small text-wtm-soft mb-2">Lower distance usually means more water under the sensor.</p>
+              <div class="chart-wrap chart-wrap-hero"><canvas id="distanceChart"></canvas></div>
+            </div>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-rate">
+            <div class="card-body">
+              <div class="chart-wrap chart-wrap-hero"><canvas id="rateChart"></canvas></div>
+            </div>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-hourly">
+            <div class="card-body">
+              <div class="chart-wrap chart-wrap-hero"><canvas id="hourlyChart"></canvas></div>
+            </div>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-gaps">
+            <div class="card-body">
+              <p class="small text-wtm-soft mb-2">Longer bars mean more time passed before the next upload (unchanged level).</p>
+              <div class="chart-wrap chart-wrap-hero"><canvas id="gapsChart"></canvas></div>
+            </div>
+          </div>
+          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-pie">
+            <div class="card-body">
+              <div class="chart-wrap chart-wrap-hero chart-wrap-pie"><canvas id="activityPieChart"></canvas></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Largest water drops (consumption)</h2>
+                <p class="small text-wtm-soft mb-2 mb-lg-3">Each bar is one step between two readings: level fell by this amount, ending at the time on the label.</p>
+                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topDrainsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Largest rises (refill / gain)</h2>
+                <p class="small text-wtm-soft mb-2 mb-lg-3">Each bar is a level increase between two uploads—often a fill or recovery.</p>
+                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topFillsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-wtm mb-3">
+          <div class="card-body">
+            <h2 class="h6 fw-bold text-wtm-strong mb-1">Running totals in this window</h2>
+            <p class="small text-wtm-soft mb-2 mb-lg-3">Cumulative sum of all level drops (consumed) vs all rises (filled), from the first to the last sample.</p>
+            <div class="chart-wrap chart-wrap-cumulative"><canvas id="cumulativeChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card card-wtm insight-card mb-3">
+          <div class="card-body">
+            <h2 class="h6 fw-bold text-wtm-strong mb-3">Key insights</h2>
+            <ul id="insightList" class="mb-0 ps-3 insight-list"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-device" role="tabpanel">
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100">
+              <div class="card-body">
+                <h2 class="h6 text-uppercase text-wtm-muted mb-3">Bootstrap / provision</h2>
+                <dl id="bootstrapDl" class="row mb-0 small"></dl>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100">
+              <div class="card-body">
+                <h2 class="h6 text-uppercase text-wtm-muted mb-3">Runtime config</h2>
+                <dl id="configDl" class="row mb-0 small"></dl>
+              </div>
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="card card-wtm">
+              <div class="card-body">
+                <h2 class="h6 text-uppercase text-wtm-muted mb-3">Firmware / OTA</h2>
+                <pre id="firmwarePre" class="wtm-pre mb-0 small"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-logs" role="tabpanel">
+        <div class="card card-wtm">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-wtm table-hover mb-0">
+                <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+                <tbody id="logsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-errors" role="tabpanel">
+        <div class="card card-wtm">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-wtm table-hover mb-0">
+                <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+                <tbody id="errorsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="mt-4 py-3 border-top small text-wtm-muted">
+      <span id="statusText">Connecting to Firebase…</span>
+    </footer>
+  </main>
+
+  <div class="offcanvas offcanvas-end offcanvas-wtm text-reset" tabindex="-1" id="adminPanel" aria-labelledby="adminPanelLabel">
+    <div class="offcanvas-header border-bottom border-wtm">
+      <h2 class="offcanvas-title h5" id="adminPanelLabel">Admin — devices</h2>
+      <button type="button" class="btn-close btn-close-wtm" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+      <p class="small text-wtm-muted">Curate which device IDs appear in the report dropdown. One ID per line. Empty allowlist = every device returned from <code class="small">/devices</code> when you sync.</p>
+      <label for="allowlistInput" class="form-label">Device allowlist</label>
+      <textarea id="allowlistInput" class="form-control font-monospace mb-3" rows="6" placeholder="device_58992D004F8C"></textarea>
+      <div class="d-grid gap-2 mb-4">
+        <button type="button" id="saveAllowlistBtn" class="btn btn-wtm-accent">Save allowlist</button>
+      </div>
+      <label for="firebaseBaseInput" class="form-label">Realtime Database REST root</label>
+      <input id="firebaseBaseInput" type="url" class="form-control font-monospace mb-2" placeholder="https://waterlevelmonitor-95f66-default-rtdb.firebaseio.com" autocomplete="off">
+      <p class="small text-wtm-muted mb-2">Use the <code>.firebaseio.com</code> root (same project as the <a href="https://console.firebase.google.com/project/waterlevelmonitor-95f66/database/waterlevelmonitor-95f66-default-rtdb/data" target="_blank" rel="noopener">Realtime Database console</a>), not the console page URL.</p>
+      <button type="button" id="fetchFirebaseBtn" class="btn btn-wtm-primary w-100 mb-4">Fetch devices from Firebase</button>
+      <p class="small text-wtm-muted mb-0">The URL here must be the <strong>REST API root</strong> (ends with <code class="small">.firebaseio.com</code>), not the Firebase Console page. Google Sign-In can be added later.</p>
+    </div>
+  </div>
+</body>
+</html>
