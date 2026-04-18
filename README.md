@@ -11,7 +11,7 @@ This repo has two parts:
 | Component | Role |
 |-----------|------|
 | **ESP32** (WiFi stack, `WebServer`, `Preferences`) | Main controller |
-| **HC-SR04** (or compatible 5 V trigger / echo ultrasonic module) | Distance → water level |
+| **JSN-SR04T** (or compatible 5 V trigger / echo ultrasonic module) | Distance → water level |
 
 ### Pin assignment (from firmware)
 
@@ -22,7 +22,7 @@ This repo has two parts:
 | Power | **3.3 V or 5 V** (see note) | Vcc |
 | Ground | **GND** | Gnd |
 
-**Logic levels:** Many HC-SR04 boards run at 5 V and output **5 V on the Echo line**. ESP32 GPIOs are **not 5 V tolerant**. Safe options:
+**Logic levels:** Many JSN-SR04T boards run at 5 V and output **5 V on the Echo line**. ESP32 GPIOs are **not 5 V tolerant**. Safe options:
 
 - Use a **3.3 V–compatible** ultrasonic module, or  
 - Power the sensor at 5 V but **level-shift Echo from 5 V → 3.3 V** before GPIO 16, or  
@@ -43,7 +43,7 @@ flowchart LR
     IO16["GPIO16 ECHO"]
   end
 
-  subgraph US["HC-SR04 (or compatible)"]
+  subgraph US["JSN-SR04T (or compatible)"]
     VCC[VCc]
     TRIG[Trig]
     ECHO[Echo]
@@ -59,7 +59,7 @@ flowchart LR
 ### Wiring sketch (ASCII)
 
 ```
-                    ESP32                          HC-SR04
+                    ESP32                          JSN-SR04T
                  +-----------+                    +---------+
     3V3 -------->| 3V3       |                    | Vcc     |
                  |           |                    |         |
