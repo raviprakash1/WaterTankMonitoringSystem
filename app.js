@@ -183,21 +183,28 @@ function subsetRowsForRange(rows, dateKey, startTime, endTime) {
   if (!result.length) {
     const prev = [...rows].reverse().find((r) => new Date(r.timestamp) < start);
     const next = rows.find((r) => new Date(r.timestamp) > end);
-    if (prev) result.push({ ...prev, timestamp: start.toISOString(), synthetic: true });
-    if (next) result.push({ ...next, timestamp: end.toISOString(), synthetic: true });
+    if (prev) result.push({ ...prev, timestamp: start.toISOString(), _wtmPad: true });
+    if (next) result.push({ ...next, timestamp: end.toISOString(), _wtmPad: true });
   } else {
     const first = result[0];
     const last = result[result.length - 1];
     if (new Date(first.timestamp) > start) {
       const prev = [...rows].reverse().find((r) => new Date(r.timestamp) < start);
-      if (prev) result.unshift({ ...prev, timestamp: start.toISOString(), synthetic: true });
+      if (prev) result.unshift({ ...prev, timestamp: start.toISOString(), _wtmPad: true });
     }
     if (new Date(last.timestamp) < end) {
-      result.push({ ...last, timestamp: end.toISOString(), synthetic: true });
+      result.push({ ...last, timestamp: end.toISOString(), _wtmPad: true });
     }
   }
 
   return result.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+function lastRealSampleRow(rows) {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (!rows[i]._wtmPad) return rows[i];
+  }
+  return rows[rows.length - 1];
 }
 
 function getDateKeysFromHistory(historyObj) {
@@ -302,7 +309,7 @@ function analyze(rows, significantChange, tankHeightCm) {
     };
   }
 
-  const realRows = rows.filter((r) => !r.synthetic);
+  const realRows = rows.filter((r) => !r._wtmPad);
   const series = realRows.length ? realRows : rows;
 
   let minLevel = series[0].levelPercent;
@@ -319,7 +326,6 @@ function analyze(rows, significantChange, tankHeightCm) {
   let biggestDrop = { delta: 0, at: null };
   let biggestRise = { delta: 0, at: null };
   let biggestIntervalDrop = { percent: 0, from: null, to: null, minutes: 0 };
-
   for (let i = 0; i < series.length; i += 1) {
     const current = series[i];
     minLevel = Math.min(minLevel, current.levelPercent);
@@ -379,7 +385,7 @@ function analyze(rows, significantChange, tankHeightCm) {
   const gapStats = computeGaps(series);
   const cumulative = buildCumulativeSeries(series);
 
-  const last = series[series.length - 1];
+  const lastSample = lastRealSampleRow(rows);
   return {
     summary: {
       minLevel,
@@ -390,13 +396,13 @@ function analyze(rows, significantChange, tankHeightCm) {
       totalUse,
       totalFillCm: (totalFill / 100) * tankHeightCm,
       totalUseCm: (totalUse / 100) * tankHeightCm,
-      waterNowCm: (last.levelPercent / 100) * tankHeightCm,
+      waterNowCm: (lastSample.levelPercent / 100) * tankHeightCm,
       fillEvents,
       mostConsumedAt: biggestDrop.at,
       mostFilledAt: biggestRise.at,
-      lastReadingAt: last.timestamp,
-      currentLevelPct: last.levelPercent,
-      currentDistanceCm: last.distanceCm,
+      lastReadingAt: lastSample.timestamp,
+      currentLevelPct: lastSample.levelPercent,
+      currentDistanceCm: lastSample.distanceCm,
       biggestIntervalDrop
     },
     hourlyUsage,

@@ -1,0 +1,12 @@
+﻿.ai/
+_gh_clone_tmp/
+WaterTankMonitoringSystem/
+**/builds/
+**/*.elf
+**/*.map
+.DS_Store
+Thumbs.db
+
+# Arduino-CLI sketch folder (duplicate of WaterTankSensorSketch.ino)
+code/WaterTankSensorSketch/
+
