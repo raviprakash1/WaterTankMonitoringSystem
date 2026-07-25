@@ -1,10 +1,12 @@
-﻿# Water Tank Monitor firmware build 1.0.1
+# Water Tank Monitor firmware build 1.0.1
 
 - Board: ESP32 Dev Module (`esp32:esp32:esp32`)
-- Sketch: `WaterTankSensorSketch.ino`
+- Sketch: `code/WaterTankSensorSketch.ino`
 - Built: 2026-07-25 11:43:54
 - App size: ~1090 KB (85% of 1.25 MB app partition)
 - Features: persistent WiFi reconnect (no AP trap on disconnect)
+
+All paths below are relative to the repository root and are case-sensitive on Linux and macOS.
 
 ## Files
 
@@ -18,8 +20,21 @@
 
 ## USB flash
 
+Flashing uses only the prebuilt binaries in this folder, so no sketch folder is needed:
+
 ```powershell
-arduino-cli upload -p COMx --fqbn esp32:esp32:esp32 --input-dir "builds/1.0.1" "code/WaterTankSensorSketch"
+arduino-cli upload -p COMx --fqbn esp32:esp32:esp32 --input-dir Build/1.0.1
 ```
 
 Replace `COMx` with your serial port (e.g. `COM3`).
+
+## Rebuild from source
+
+Arduino requires the sketch to sit in a folder matching its filename. That folder is generated
+rather than committed, so create it first:
+
+```powershell
+New-Item -ItemType Directory -Force code/WaterTankSensorSketch
+Copy-Item code/WaterTankSensorSketch.ino code/WaterTankSensorSketch/ -Force
+arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir Build/1.0.1 code/WaterTankSensorSketch
+```
