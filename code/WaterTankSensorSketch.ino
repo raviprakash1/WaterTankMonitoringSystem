@@ -9,7 +9,7 @@
 #include <math.h>
 
 // ================= BUILD =================
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.0.1"
 
 // ================= WIFI AP =================
 const char* AP_SSID = "WaterTankMonitor";
@@ -49,6 +49,12 @@ unsigned long lastSensorCycleMs = 0;
 unsigned long lastConfigFetchMs = 0;
 unsigned long lastSystemInfoMs = 0;
 unsigned long lastOtaCheckMs = 0;
+unsigned long lastWifiReconnectMs = 0;
+bool wifiWasConnected = false;
+
+// Reconnect backoff: keep trying forever while credentials exist (never trap in AP).
+const unsigned long WIFI_RECONNECT_INTERVAL_MS = 15000UL;
+const int WIFI_CONNECT_ATTEMPTS = 30;  // ~15s at 500ms
 
 // ================= DECLARATIONS =================
 void setupDeviceId();
@@ -57,9 +63,11 @@ void saveLocalPreferences();
 
 void connectOrStartAP();
 bool connectToWiFi();
+bool ensureWiFiConnected();
 void startConfigPortal();
 void setupPortalRoutes();
 void setupNormalRoutes();
+void onWiFiConnected();
 
 void initTime();
 String getISOTime();
@@ -120,14 +128,16 @@ void setup() {
     setupNormalRoutes();
     server.begin();
 
-    initTime();
-    fetchCloudConfig();
-    uploadBootstrapConfig();
-    uploadSystemInfo();
-    logEvent("INFO", "System started");
-
-    // first reading immediately after boot
-    processSensorCycle();
+    if (WiFi.status() == WL_CONNECTED) {
+      initTime();
+      fetchCloudConfig();
+      uploadBootstrapConfig();
+      uploadSystemInfo();
+      logEvent("INFO", "System started");
+      processSensorCycle();
+    } else {
+      Serial.println("Boot without WiFi — sensor/cloud wait for reconnect");
+    }
     lastSensorCycleMs = millis();
   }
 }
@@ -136,22 +146,33 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  // Config portal only when no credentials were saved (first setup).
+  // If SSID exists, never stay stuck in AP — keep trying STA forever.
   if (portalMode) {
+    if (wifiSsid.length() > 0) {
+      unsigned long nowPortal = millis();
+      if (nowPortal - lastWifiReconnectMs >= WIFI_RECONNECT_INTERVAL_MS) {
+        lastWifiReconnectMs = nowPortal;
+        Serial.println("Leaving AP portal — retrying saved WiFi…");
+        if (connectToWiFi()) {
+          portalMode = false;
+          server.stop();
+          delay(50);
+          setupNormalRoutes();
+          server.begin();
+          onWiFiConnected();
+          logEvent("INFO", "WiFi reconnected (left AP portal)");
+        }
+      }
+    }
     delay(10);
     return;
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    logEvent("WARN", "WiFi disconnected");
-    connectOrStartAP();
-
-    if (!portalMode) {
-      initTime();
-      fetchCloudConfig();
-      uploadSystemInfo();
-    } else {
-      return;
-    }
+  if (!ensureWiFiConnected()) {
+    // Stay in station mode and retry on the next interval; do not open AP.
+    delay(100);
+    return;
   }
 
   unsigned long now = millis();
@@ -217,6 +238,16 @@ void saveLocalPreferences() {
 }
 
 // ================= WIFI / AP =================
+void onWiFiConnected() {
+  wifiWasConnected = true;
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+  initTime();
+  fetchCloudConfig();
+  uploadSystemInfo();
+  lastWifiReconnectMs = millis();
+}
+
 void connectOrStartAP() {
   if (wifiSsid.length() == 0) {
     Serial.println("No WiFi saved -> starting AP");
@@ -226,36 +257,121 @@ void connectOrStartAP() {
 
   if (connectToWiFi()) {
     portalMode = false;
+    wifiWasConnected = true;
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(true);
     return;
   }
 
-  Serial.println("WiFi failed -> starting AP");
-  startConfigPortal();
+  // Credentials exist but router is down at boot — stay in STA and keep retrying in loop.
+  // Do NOT open the config AP (that permanently blocks reconnect until reboot).
+  Serial.println("WiFi failed at boot — will keep retrying in background (no AP)");
+  portalMode = false;
+  wifiWasConnected = false;
+  lastWifiReconnectMs = 0;
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
 }
 
 bool connectToWiFi() {
+  if (wifiSsid.length() == 0) return false;
+
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
-  delay(300);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
+  // Soft disconnect (keep credentials in RAM); then begin fresh.
+  WiFi.disconnect(false, false);
+  delay(200);
 
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
 
-  Serial.print("Connecting to WiFi");
+  Serial.print("Connecting to WiFi (");
+  Serial.print(wifiSsid);
+  Serial.print(")");
+
   int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 15) {
-    delay(1000);
+  while (WiFi.status() != WL_CONNECTED && retry < WIFI_CONNECT_ATTEMPTS) {
+    delay(500);
     Serial.print(".");
     retry++;
+    yield();
   }
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("Connected. IP: ");
     Serial.println(WiFi.localIP());
+    wifiWasConnected = true;
     return true;
   }
 
   Serial.println("Connection failed");
+  return false;
+}
+
+/** Runtime watchdog: if STA drops, keep reconnecting forever while SSID is saved. */
+bool ensureWiFiConnected() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiWasConnected) {
+      Serial.println("WiFi back online");
+      onWiFiConnected();
+      logEvent("INFO", "WiFi reconnected");
+    }
+    wifiWasConnected = true;
+    return true;
+  }
+
+  if (wifiSsid.length() == 0) {
+    Serial.println("No WiFi credentials — cannot reconnect");
+    return false;
+  }
+
+  unsigned long now = millis();
+  if (wifiWasConnected) {
+    Serial.println("WiFi disconnected — will keep reconnecting");
+    wifiWasConnected = false;
+    lastWifiReconnectMs = 0;  // attempt immediately
+  }
+
+  if (now - lastWifiReconnectMs < WIFI_RECONNECT_INTERVAL_MS && lastWifiReconnectMs != 0) {
+    return false;
+  }
+  lastWifiReconnectMs = now;
+
+  Serial.println("Attempting WiFi reconnect…");
+
+  // Prefer stack reconnect first (faster when AP briefly blipped).
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.reconnect();
+
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 10) {
+    delay(500);
+    Serial.print(".");
+    retry++;
+    yield();
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Reconnected via WiFi.reconnect(). IP: ");
+    Serial.println(WiFi.localIP());
+    onWiFiConnected();
+    logEvent("INFO", "WiFi reconnected");
+    return true;
+  }
+
+  // Full begin() retry if soft reconnect failed.
+  if (connectToWiFi()) {
+    onWiFiConnected();
+    logEvent("INFO", "WiFi reconnected");
+    return true;
+  }
+
+  Serial.println("Reconnect failed — retrying later");
   return false;
 }
 
