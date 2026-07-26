@@ -159,7 +159,9 @@ function rowsForSelection(device) {
 }
 
 function groupRuns(steps, kind, threshold) {
-  const wanted = kind === "fill" ? (d) => d >= threshold : (d) => d <= -threshold;
+  // Group consecutive movement first, then apply the event threshold to the
+  // whole run. This catches gradual refills (for example five +1% samples).
+  const wanted = kind === "fill" ? (d) => d > 0.05 : (d) => d < -0.05;
   const groups = [];
   let current = null;
   steps.forEach((s) => {
@@ -179,7 +181,7 @@ function groupRuns(steps, kind, threshold) {
     percent: Math.abs(g.endLevel - g.startLevel),
     liters: litersFromPct(Math.abs(g.endLevel - g.startLevel)),
     minutes: Math.max(0, (new Date(g.to) - new Date(g.from)) / 60000)
-  }));
+  })).filter((g) => g.percent >= threshold);
 }
 
 function detectLowEpisodes(rows, threshold) {
@@ -197,6 +199,8 @@ function detectLowEpisodes(rows, threshold) {
 
 function analyze(rows, eventThreshold, lowThreshold) {
   const steps = [];
+  const allGaps = [];
+  const gapLabels = [];
   const hourly = Array(24).fill(0);
   const timeParts = [0, 0, 0, 0];
   let totalFill = 0, totalUse = 0;
@@ -204,6 +208,11 @@ function analyze(rows, eventThreshold, lowThreshold) {
     const prev = rows[i - 1], cur = rows[i];
     const delta = cur.levelPercent - prev.levelPercent;
     const mins = Math.max(0, (new Date(cur.timestamp) - new Date(prev.timestamp)) / 60000);
+    allGaps.push(mins);
+    gapLabels.push(formatDateTime(cur.timestamp));
+    // A change across different history days or a long silent period is not
+    // observable as a real fill/drain event. Keep it out of usage totals.
+    if (prev.dateKey !== cur.dateKey || mins > 180) continue;
     const s = { from: prev.timestamp, to: cur.timestamp, before: prev.levelPercent, after: cur.levelPercent, delta, minutes: mins };
     steps.push(s);
     if (delta > 0) totalFill += delta;
@@ -218,7 +227,7 @@ function analyze(rows, eventThreshold, lowThreshold) {
   const fillRuns = groupRuns(steps, "fill", eventThreshold);
   const drainRuns = groupRuns(steps, "drain", eventThreshold);
   const levels = rows.map((r) => r.levelPercent);
-  const gaps = steps.map((s) => s.minutes);
+  const gaps = allGaps;
   const daily = {};
   rows.forEach((r) => {
     daily[r.dateKey] ||= { label: formatDateKey(r.dateKey), fill: 0, use: 0, close: r.levelPercent };
@@ -233,20 +242,30 @@ function analyze(rows, eventThreshold, lowThreshold) {
   const cumulative = { labels: [], fill: [], use: [] };
   let cf = 0, cu = 0;
   rows.forEach((r, i) => {
-    if (i) { const d = r.levelPercent - rows[i - 1].levelPercent; d > 0 ? cf += d : cu += Math.abs(d); }
+    if (i) {
+      const prev = rows[i - 1];
+      const mins = (new Date(r.timestamp) - new Date(prev.timestamp)) / 60000;
+      if (prev.dateKey === r.dateKey && mins <= 180) {
+        const d = r.levelPercent - prev.levelPercent;
+        d > 0 ? cf += d : cu += Math.abs(d);
+      }
+    }
     cumulative.labels.push(formatTime(r.timestamp)); cumulative.fill.push(cf); cumulative.use.push(cu);
   });
   const first = rows[0], last = rows.at(-1);
   const elapsedHours = Math.max(0.01, (new Date(last.timestamp) - new Date(first.timestamp)) / 3600000);
   const usePerDay = (totalUse / elapsedHours) * 24;
-  const daysRemaining = usePerDay > 0 ? last.levelPercent / usePerDay : Infinity;
+  // A few minutes of data can turn one large draw into an absurd forecast.
+  // Require a meaningful observation window before showing days remaining.
+  const enoughForForecast = elapsedHours >= 6 && rows.length >= 8;
+  const daysRemaining = enoughForForecast && usePerDay > 0 ? last.levelPercent / usePerDay : Infinity;
   return {
     first, last, steps, hourly, timeParts, totalFill, totalUse, fillRuns, drainRuns,
     lowEpisodes: detectLowEpisodes(rows, lowThreshold),
     min: Math.min(...levels), max: Math.max(...levels),
     avg: levels.reduce((a, b) => a + b, 0) / levels.length,
     trend: rows.length > 1 ? last.levelPercent - rows.at(-2).levelPercent : 0,
-    gaps, medianGap: median(gaps), maxGap: gaps.length ? Math.max(...gaps) : 0,
+    gaps, gapLabels, medianGap: median(gaps), maxGap: gaps.length ? Math.max(...gaps) : 0,
     daily: Object.values(daily), cumulative, usePerDay, daysRemaining, samples: rows.length
   };
 }
@@ -505,7 +524,7 @@ function renderCharts(rows, a) {
     }] }, options: baseOptions("Distance cm", { beginAtZero: false })
   });
   makeChart("gaps", "gapsChart", {
-    type: "bar", data: { labels: a.steps.map((s) => formatTime(s.to)), datasets: [{
+    type: "bar", data: { labels: a.gapLabels, datasets: [{
       label: "Minutes since prior reading", data: a.gaps,
       backgroundColor: a.gaps.map((g) => g > 60 ? `${c.red}bb` : g > 35 ? `${c.amber}bb` : `${c.blue}99`), borderRadius: 4
     }] }, options: baseOptions("Minutes")
