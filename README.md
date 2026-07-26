@@ -4,7 +4,9 @@ This repo has two parts:
 
 1. **Firmware** (`WaterTankSensorSketch.ino`) — ESP32 + ultrasonic sensor. It measures distance, derives tank fill level, and syncs readings to **Firebase Realtime Database** (live snapshot + per-day history). It also exposes a setup portal, NVS-backed settings, optional cloud config, HTTP OTA, and a small local HTTP API.
 
-2. **Reports** (static web app: `index.html`, `app.js`, `styles.css`) — a **browser dashboard** that reads from **Firebase Realtime Database** (REST) and turns `devices/...` data into analytics. **Full reporting documentation** (sync vs refresh, KPI strip, hero charts, top events, cumulative totals, cache, `localStorage` keys): [REPORTS.md](./REPORTS.md).
+2. **Reports** (static web app: `index.html`, `app.js`, `styles.css`) — a **browser dashboard** that reads from **Firebase Realtime Database** (REST) and turns `devices/...` data into analytics. **Full reporting documentation**: [docs/REPORTS.md](./docs/REPORTS.md).
+
+**Build / USB flash / OTA / Firebase publish (including what `sha256` is for):** [docs/BUILD_AND_DEPLOY.md](./docs/BUILD_AND_DEPLOY.md).
 
 ## Hardware
 
@@ -91,14 +93,22 @@ From the sketch includes, install (Boards Manager: **ESP32**):
 
 ### Firmware constants
 
-- **`FW_VERSION`**: `"1.0.0"` — used in telemetry and OTA version compare.
+- **`FW_VERSION`**: bump this for every release (current source uses semver, e.g. `"1.0.4"`). OTA only installs when Firebase `latest_version` is newer.
 - **`firebaseBaseUrl`**: default Firebase Realtime Database root URL (change if you use another project).
+
+### WiFi reconnect
+
+After WiFi is saved, the device **never requires a power cycle** to come back online: it retries forever (soft reconnect → full reconnect → periodic radio hard-reset), stays in station mode, and only opens the setup AP when **no** credentials are stored.
+
+### OTA
+
+Checks Firebase on boot, on every reconnect, and on a timer (default every **5** minutes). Manifest fields: `enabled`, `latest_version`, `url` (optional: `sha256`, `release_notes`, `published_at`). See [docs/BUILD_AND_DEPLOY.md](./docs/BUILD_AND_DEPLOY.md).
 
 ## Reports (web dashboard)
 
-Short summary: **Tank Reports** loads **`/devices`** from Firebase RTDB over REST, caches the last successful response in the browser, and renders KPIs, insights, a **hero** chart (type selectable), **top consumption / refill** bar charts, **cumulative** consumed-vs-filled lines, and tabs for device metadata, logs, and errors.
+Short summary: **Tank Reports** loads **`/devices`** from Firebase RTDB over REST, shows a live animated tank, fill/empty events, gauges, and charts.
 
-See **[REPORTS.md](./REPORTS.md)** for controls (sync vs refresh), analytics definitions, `localStorage` keys, themes, and the expected JSON shape.
+See **[docs/REPORTS.md](./docs/REPORTS.md)** for analytics details.
 
 ### Data flow (firmware → reports)
 
@@ -118,7 +128,8 @@ flowchart LR
 - **Level:** `level_percent = (tankHeightCm - distanceCm) / tankHeightCm * 100`, clamped 0–100%.
 - **Uploads:** Each cycle updates **history** (PATCH under `history/<date>.json`) and **live** (`tank_live.json` PUT). *(Note: upload gating via `shouldUpload()` is currently bypassed with `if (true)` in the sketch—every valid reading uploads.)*
 - **Cloud config:** Every 10 minutes, GET `devices/<deviceId>/config.json` can override tank height, interval, threshold, min distance, tank name, OTA interval.
-- **OTA:** Reads `devices/<deviceId>/firmware.json` or root `firmware.json` for `latest_version`, `url`, `enabled`; uses HTTPS with `setInsecure()` (no certificate pin).
+- **WiFi:** Persistent STA reconnect with radio hard-reset after repeated failures; no AP trap once provisioned.
+- **OTA:** Reads `devices/<deviceId>/firmware.json` or root `firmware.json` for `latest_version`, `url`, `enabled`; rewrites GitHub blob URLs to raw; HTTPS with `setInsecure()` (no certificate pin).
 
 ## HTTP endpoints (STA mode, port 80)
 

@@ -9,7 +9,7 @@
 #include <math.h>
 
 // ================= BUILD =================
-#define FW_VERSION "1.0.3"
+#define FW_VERSION "1.0.4"
 
 // ================= WIFI AP =================
 const char* AP_SSID = "WaterTankMonitor";
@@ -38,7 +38,7 @@ float tankHeightCm = 126.0;
 int sendIntervalMin = 1;
 float threshold = 2.0;
 float minValidDistance = 20.0;
-int otaCheckIntervalMin = 10;
+int otaCheckIntervalMin = 5;  // check Firebase for new builds often
 
 // runtime state
 float currentDistance = -1.0;
@@ -51,10 +51,17 @@ unsigned long lastSystemInfoMs = 0;
 unsigned long lastOtaCheckMs = 0;
 unsigned long lastWifiReconnectMs = 0;
 bool wifiWasConnected = false;
+volatile bool wifiDisconnectFlag = false;
+int wifiFailStreak = 0;
+int otaFailStreak = 0;
+unsigned long lastOtaFailMs = 0;
 
-// Reconnect backoff: keep trying forever while credentials exist (never trap in AP).
-const unsigned long WIFI_RECONNECT_INTERVAL_MS = 15000UL;
-const int WIFI_CONNECT_ATTEMPTS = 30;  // ~15s at 500ms
+// Keep trying forever while credentials exist (never trap in AP after provision).
+const unsigned long WIFI_RECONNECT_FAST_MS = 5000UL;
+const unsigned long WIFI_RECONNECT_SLOW_MS = 20000UL;
+const int WIFI_CONNECT_ATTEMPTS = 40;       // ~20s at 500ms
+const int WIFI_SOFT_RECONNECT_ATTEMPTS = 12;
+const int WIFI_HARD_RESET_AFTER_FAILS = 3;  // full radio cycle after repeated fails
 
 // ================= DECLARATIONS =================
 void setupDeviceId();
@@ -64,10 +71,13 @@ void saveLocalPreferences();
 void connectOrStartAP();
 bool connectToWiFi();
 bool ensureWiFiConnected();
+void hardResetWifiRadio();
+void onWifiArduinoEvent(WiFiEvent_t event);
 void startConfigPortal();
 void setupPortalRoutes();
 void setupNormalRoutes();
 void onWiFiConnected();
+unsigned long wifiReconnectIntervalMs();
 
 void initTime();
 String getISOTime();
@@ -117,6 +127,12 @@ void setup() {
   setupDeviceId();
   loadLocalPreferences();
 
+  // Station sleep often causes sticky disconnects that need a power cycle.
+  WiFi.persistent(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  WiFi.onEvent(onWifiArduinoEvent);
+
   Serial.println();
   Serial.println("================================");
   Serial.println("Water Tank Monitor");
@@ -157,7 +173,7 @@ void loop() {
   if (portalMode) {
     if (wifiSsid.length() > 0) {
       unsigned long nowPortal = millis();
-      if (nowPortal - lastWifiReconnectMs >= WIFI_RECONNECT_INTERVAL_MS) {
+      if (nowPortal - lastWifiReconnectMs >= wifiReconnectIntervalMs()) {
         lastWifiReconnectMs = nowPortal;
         Serial.println("Leaving AP portal — retrying saved WiFi…");
         if (connectToWiFi()) {
@@ -168,6 +184,12 @@ void loop() {
           server.begin();
           onWiFiConnected();
           logEvent("INFO", "WiFi reconnected (left AP portal)");
+        } else {
+          wifiFailStreak++;
+          if (wifiFailStreak >= WIFI_HARD_RESET_AFTER_FAILS) {
+            hardResetWifiRadio();
+            wifiFailStreak = 0;
+          }
         }
       }
     }
@@ -176,7 +198,7 @@ void loop() {
   }
 
   if (!ensureWiFiConnected()) {
-    // Stay in station mode and retry on the next interval; do not open AP.
+    // Stay in station mode and retry forever; never open AP once provisioned.
     delay(100);
     return;
   }
@@ -193,7 +215,12 @@ void loop() {
     lastSystemInfoMs = now;
   }
 
-  if (now - lastOtaCheckMs >= (unsigned long)otaCheckIntervalMin * 60UL * 1000UL) {
+  // After a failed OTA, wait a bit before hammering GitHub again.
+  unsigned long otaBackoffMs = (otaFailStreak > 0)
+      ? min(30UL * 60UL * 1000UL, (unsigned long)otaFailStreak * 2UL * 60UL * 1000UL)
+      : 0;
+  unsigned long otaDueMs = max((unsigned long)otaCheckIntervalMin * 60UL * 1000UL, otaBackoffMs);
+  if (now - lastOtaCheckMs >= otaDueMs) {
     lastOtaCheckMs = now;
     checkForOtaUpdate();
   }
@@ -226,7 +253,7 @@ void loadLocalPreferences() {
   sendIntervalMin = prefs.getInt("interval", 15);
   threshold = prefs.getFloat("threshold", 2.0);
   minValidDistance = prefs.getFloat("min_dist", 20.0);
-  otaCheckIntervalMin = prefs.getInt("ota_int", 10);
+  otaCheckIntervalMin = prefs.getInt("ota_int", 5);
 
   lastSentLevelPercent = prefs.getFloat("last_lvl", -999.0);
 }
@@ -244,8 +271,45 @@ void saveLocalPreferences() {
 }
 
 // ================= WIFI / AP =================
+unsigned long wifiReconnectIntervalMs() {
+  // Fail fast at first, then slow down so we do not thrash the radio forever.
+  return (wifiFailStreak < WIFI_HARD_RESET_AFTER_FAILS)
+      ? WIFI_RECONNECT_FAST_MS
+      : WIFI_RECONNECT_SLOW_MS;
+}
+
+void onWifiArduinoEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      wifiDisconnectFlag = true;
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiDisconnectFlag = false;
+      wifiFailStreak = 0;
+      break;
+    default:
+      break;
+  }
+}
+
+void hardResetWifiRadio() {
+  Serial.println("Hard-resetting WiFi radio…");
+  WiFi.disconnect(true, false);
+  delay(200);
+  WiFi.mode(WIFI_OFF);
+  delay(400);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+  delay(200);
+}
+
 void onWiFiConnected() {
   wifiWasConnected = true;
+  wifiFailStreak = 0;
+  wifiDisconnectFlag = false;
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   initTime();
@@ -266,6 +330,7 @@ void connectOrStartAP() {
   if (connectToWiFi()) {
     portalMode = false;
     wifiWasConnected = true;
+    WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
     WiFi.persistent(true);
     return;
@@ -277,7 +342,9 @@ void connectOrStartAP() {
   portalMode = false;
   wifiWasConnected = false;
   lastWifiReconnectMs = 0;
+  wifiFailStreak = 1;
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 }
@@ -286,12 +353,13 @@ bool connectToWiFi() {
   if (wifiSsid.length() == 0) return false;
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
   // Soft disconnect (keep credentials in RAM); then begin fresh.
   WiFi.disconnect(false, false);
-  delay(200);
+  delay(250);
 
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
 
@@ -312,6 +380,8 @@ bool connectToWiFi() {
     Serial.print("Connected. IP: ");
     Serial.println(WiFi.localIP());
     wifiWasConnected = true;
+    wifiFailStreak = 0;
+    wifiDisconnectFlag = false;
     return true;
   }
 
@@ -322,12 +392,13 @@ bool connectToWiFi() {
 /** Runtime watchdog: if STA drops, keep reconnecting forever while SSID is saved. */
 bool ensureWiFiConnected() {
   if (WiFi.status() == WL_CONNECTED) {
-    if (!wifiWasConnected) {
+    if (!wifiWasConnected || wifiDisconnectFlag) {
       Serial.println("WiFi back online");
       onWiFiConnected();
       logEvent("INFO", "WiFi reconnected");
     }
     wifiWasConnected = true;
+    wifiDisconnectFlag = false;
     return true;
   }
 
@@ -337,26 +408,35 @@ bool ensureWiFiConnected() {
   }
 
   unsigned long now = millis();
-  if (wifiWasConnected) {
+  if (wifiWasConnected || wifiDisconnectFlag) {
     Serial.println("WiFi disconnected — will keep reconnecting");
     wifiWasConnected = false;
+    wifiDisconnectFlag = false;
     lastWifiReconnectMs = 0;  // attempt immediately
   }
 
-  if (now - lastWifiReconnectMs < WIFI_RECONNECT_INTERVAL_MS && lastWifiReconnectMs != 0) {
+  if (now - lastWifiReconnectMs < wifiReconnectIntervalMs() && lastWifiReconnectMs != 0) {
     return false;
   }
   lastWifiReconnectMs = now;
 
-  Serial.println("Attempting WiFi reconnect…");
+  Serial.print("Attempting WiFi reconnect (fail streak=");
+  Serial.print(wifiFailStreak);
+  Serial.println(")…");
+
+  // After several soft failures the WiFi stack can hang until a radio cycle.
+  if (wifiFailStreak > 0 && (wifiFailStreak % WIFI_HARD_RESET_AFTER_FAILS) == 0) {
+    hardResetWifiRadio();
+  }
 
   // Prefer stack reconnect first (faster when AP briefly blipped).
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.reconnect();
 
   int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 10) {
+  while (WiFi.status() != WL_CONNECTED && retry < WIFI_SOFT_RECONNECT_ATTEMPTS) {
     delay(500);
     Serial.print(".");
     retry++;
@@ -379,7 +459,8 @@ bool ensureWiFiConnected() {
     return true;
   }
 
-  Serial.println("Reconnect failed — retrying later");
+  wifiFailStreak++;
+  Serial.println("Reconnect failed — retrying later (no power cycle needed)");
   return false;
 }
 
@@ -431,7 +512,7 @@ void setupPortalRoutes() {
       "<label>Interval (min)</label><br><input name='interval' value='15'><br><br>"
       "<label>Threshold (%)</label><br><input name='threshold' value='2'><br><br>"
       "<label>Min Valid Distance (cm)</label><br><input name='min_dist' value='20'><br><br>"
-      "<label>OTA Check Interval (min)</label><br><input name='ota_int' value='10'><br><br>"
+      "<label>OTA Check Interval (min)</label><br><input name='ota_int' value='5'><br><br>"
       "<button type='submit'>Save & Restart</button>"
       "</form>"
       "</body></html>";
@@ -996,22 +1077,29 @@ void checkForOtaUpdate() {
   logEvent("INFO", "OTA update found: " + latestVersion);
 
   if (performHttpOta(downloadUrl)) {
+    otaFailStreak = 0;
     logEvent("INFO", "OTA successful, rebooting");
     delay(1000);
     ESP.restart();
   } else {
-    logError("OTA failed for " + latestVersion);
+    otaFailStreak++;
+    lastOtaFailMs = millis();
+    logError("OTA failed for " + latestVersion + " (attempt " + String(otaFailStreak) + ")");
   }
 }
 
 bool performHttpOta(const String &url) {
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(20);
+  client.setTimeout(45);
 
   // GitHub / CDNs often 302; without this, OTA downloads HTML or fails.
   httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   httpUpdate.rebootOnUpdate(false);
+  httpUpdate.setLedPin(-1);
+
+  Serial.print("OTA downloading: ");
+  Serial.println(url);
 
   t_httpUpdate_return ret = httpUpdate.update(client, url);
 
