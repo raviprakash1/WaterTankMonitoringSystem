@@ -9,7 +9,7 @@
 #include <math.h>
 
 // ================= BUILD =================
-#define FW_VERSION "1.0.1"
+#define FW_VERSION "1.0.3"
 
 // ================= WIFI AP =================
 const char* AP_SSID = "WaterTankMonitor";
@@ -98,6 +98,10 @@ void processSensorCycle();
 
 void checkForOtaUpdate();
 bool performHttpOta(const String &url);
+String normalizeOtaUrl(String url);
+bool isNewerFirmware(const String &candidate, const String &current);
+bool parseOtaManifest(const String &response, String &latestVersion, String &url, bool &enabled);
+bool loadOtaManifest(String &latestVersion, String &url, bool &enabled);
 
 // ================= SETUP =================
 void setup() {
@@ -134,6 +138,8 @@ void setup() {
       uploadBootstrapConfig();
       uploadSystemInfo();
       logEvent("INFO", "System started");
+      checkForOtaUpdate();
+      lastOtaCheckMs = millis();
       processSensorCycle();
     } else {
       Serial.println("Boot without WiFi — sensor/cloud wait for reconnect");
@@ -245,6 +251,8 @@ void onWiFiConnected() {
   initTime();
   fetchCloudConfig();
   uploadSystemInfo();
+  checkForOtaUpdate();
+  lastOtaCheckMs = millis();
   lastWifiReconnectMs = millis();
 }
 
@@ -839,31 +847,128 @@ void processSensorCycle() {
 }
 
 // ================= OTA =================
+// Convert GitHub HTML/blob links into direct binary download URLs.
+// Example:
+//   https://github.com/user/repo/blob/main/Build/1.0.2/app.bin
+// -> https://raw.githubusercontent.com/user/repo/main/Build/1.0.2/app.bin
+String normalizeOtaUrl(String url) {
+  url.trim();
+  if (url.length() == 0) return url;
+
+  // Drop trailing query/hash (e.g. ?raw=1) after rewrite if needed.
+  int hashPos = url.indexOf('#');
+  if (hashPos >= 0) url = url.substring(0, hashPos);
+
+  if (url.indexOf("github.com/") >= 0) {
+    if (url.indexOf("/blob/") >= 0) {
+      url.replace("https://github.com/", "https://raw.githubusercontent.com/");
+      url.replace("http://github.com/", "https://raw.githubusercontent.com/");
+      url.replace("/blob/", "/");
+    } else if (url.indexOf("/raw/") >= 0) {
+      url.replace("https://github.com/", "https://raw.githubusercontent.com/");
+      url.replace("http://github.com/", "https://raw.githubusercontent.com/");
+      url.replace("/raw/", "/");
+    }
+  }
+
+  // ?raw=1 is only for blob pages; strip after rewrite.
+  int q = url.indexOf('?');
+  if (q >= 0) url = url.substring(0, q);
+
+  return url;
+}
+
+// Compare dotted versions like "1.0.2" vs "1.0.10". Returns true if candidate > current.
+bool isNewerFirmware(const String &candidate, const String &current) {
+  if (candidate.length() == 0) return false;
+  if (current.length() == 0) return true;
+  if (candidate == current) return false;
+
+  int cMaj = 0, cMin = 0, cPat = 0;
+  int uMaj = 0, uMin = 0, uPat = 0;
+  sscanf(candidate.c_str(), "%d.%d.%d", &cMaj, &cMin, &cPat);
+  sscanf(current.c_str(), "%d.%d.%d", &uMaj, &uMin, &uPat);
+
+  if (cMaj != uMaj) return cMaj > uMaj;
+  if (cMin != uMin) return cMin > uMin;
+  if (cPat != uPat) return cPat > uPat;
+
+  // Same numeric triple but different string (e.g. "1.0.1-rc") — treat as update.
+  return candidate != current;
+}
+
+bool parseOtaManifest(const String &response, String &latestVersion, String &url, bool &enabled) {
+  if (response.length() == 0 || response == "null") return false;
+
+  DynamicJsonDocument doc(768);
+  DeserializationError err = deserializeJson(doc, response);
+  if (err) return false;
+
+  latestVersion = doc["latest_version"] | doc["version"] | "";
+  url = doc["url"] | doc["bin_url"] | doc["download_url"] | "";
+  enabled = doc["enabled"] | true;
+  latestVersion.trim();
+  url.trim();
+  return latestVersion.length() > 0 && url.length() > 0;
+}
+
+// Prefer the newer of device-level and global firmware manifests.
+bool loadOtaManifest(String &latestVersion, String &url, bool &enabled) {
+  String deviceResp;
+  String globalResp;
+  String dVer, dUrl, gVer, gUrl;
+  bool dEn = false, gEn = false;
+  bool haveDevice = false, haveGlobal = false;
+
+  if (firebaseGet("devices/" + deviceId + "/firmware.json", deviceResp)) {
+    haveDevice = parseOtaManifest(deviceResp, dVer, dUrl, dEn);
+  }
+  if (firebaseGet("firmware.json", globalResp)) {
+    haveGlobal = parseOtaManifest(globalResp, gVer, gUrl, gEn);
+  }
+
+  if (!haveDevice && !haveGlobal) return false;
+
+  if (haveDevice && haveGlobal) {
+    // Pick the newer enabled manifest; if only one enabled, use that.
+    if (dEn && gEn) {
+      if (isNewerFirmware(gVer, dVer)) {
+        latestVersion = gVer; url = gUrl; enabled = true;
+      } else {
+        latestVersion = dVer; url = dUrl; enabled = true;
+      }
+    } else if (dEn) {
+      latestVersion = dVer; url = dUrl; enabled = true;
+    } else if (gEn) {
+      latestVersion = gVer; url = gUrl; enabled = true;
+    } else {
+      latestVersion = dVer; url = dUrl; enabled = false;
+    }
+    return true;
+  }
+
+  if (haveDevice) {
+    latestVersion = dVer; url = dUrl; enabled = dEn;
+    return true;
+  }
+
+  latestVersion = gVer; url = gUrl; enabled = gEn;
+  return true;
+}
+
 void checkForOtaUpdate() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  String response;
-  bool ok = firebaseGet("devices/" + deviceId + "/firmware.json", response);
+  String latestVersion;
+  String url;
+  bool enabled = true;
 
-  if (!ok || response == "null" || response.length() == 0) {
-    ok = firebaseGet("firmware.json", response);
-  }
-
-  if (!ok || response == "null" || response.length() == 0) {
+  if (!loadOtaManifest(latestVersion, url, enabled)) {
     Serial.println("No OTA config found");
     return;
   }
 
-  DynamicJsonDocument doc(512);
-  DeserializationError err = deserializeJson(doc, response);
-  if (err) {
-    logError("OTA config parse failed");
-    return;
-  }
-
-  String latestVersion = doc["latest_version"] | "";
-  String url = doc["url"] | "";
-  bool enabled = doc["enabled"] | true;
+  String downloadUrl = normalizeOtaUrl(url);
 
   Serial.println("---- OTA CHECK ----");
   Serial.print("Current FW: ");
@@ -872,31 +977,40 @@ void checkForOtaUpdate() {
   Serial.println(latestVersion);
   Serial.print("Enabled: ");
   Serial.println(enabled ? "true" : "false");
-  Serial.print("URL: ");
+  Serial.print("URL (raw): ");
   Serial.println(url);
+  Serial.print("URL (download): ");
+  Serial.println(downloadUrl);
 
-  if (!enabled) return;
-  if (latestVersion.length() == 0 || url.length() == 0) return;
-  if (latestVersion == String(FW_VERSION)) {
+  if (!enabled) {
+    Serial.println("OTA disabled in Firebase");
+    return;
+  }
+  if (latestVersion.length() == 0 || downloadUrl.length() == 0) return;
+
+  if (!isNewerFirmware(latestVersion, String(FW_VERSION))) {
     Serial.println("Already on latest firmware");
     return;
   }
 
   logEvent("INFO", "OTA update found: " + latestVersion);
 
-  if (performHttpOta(url)) {
+  if (performHttpOta(downloadUrl)) {
     logEvent("INFO", "OTA successful, rebooting");
     delay(1000);
     ESP.restart();
   } else {
-    logError("OTA failed");
+    logError("OTA failed for " + latestVersion);
   }
 }
 
 bool performHttpOta(const String &url) {
   WiFiClientSecure client;
   client.setInsecure();
+  client.setTimeout(20);
 
+  // GitHub / CDNs often 302; without this, OTA downloads HTML or fails.
+  httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   httpUpdate.rebootOnUpdate(false);
 
   t_httpUpdate_return ret = httpUpdate.update(client, url);
