@@ -17,14 +17,18 @@
   <nav class="navbar navbar-expand-lg navbar-wtm border-bottom sticky-top">
     <div class="container-fluid px-3 px-lg-4">
       <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="#">
-        <span class="brand-dot" aria-hidden="true"></span>
+        <span class="brand-drop" aria-hidden="true"></span>
         <span>Tank Reports</span>
       </a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="Toggle navigation">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navMain">
-        <div class="navbar-nav ms-auto align-items-lg-center gap-lg-2 flex-wrap py-2 py-lg-0">
+        <div class="navbar-nav ms-auto align-items-lg-center gap-2 flex-wrap py-2 py-lg-0">
+          <span class="live-pill" id="livePill" title="Data freshness">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="livePillText">Connecting…</span>
+          </span>
           <label class="d-flex align-items-center gap-2 small text-wtm-muted mb-0">
             <span class="d-none d-sm-inline">Theme</span>
             <select id="themeSelect" class="form-select form-select-sm wtm-select-sm" aria-label="Color theme">
@@ -41,184 +45,329 @@
   </nav>
 
   <main class="container-fluid px-3 px-lg-4 py-3 py-lg-4">
-    <header class="mb-3 mb-lg-4">
-      <h1 class="h3 fw-bold mb-1">Water level analytics</h1>
-      <p class="text-wtm-tagline mb-0 small">Multi-device dashboard live from Firebase Realtime Database. Readings appear only when the level changes—reports highlight gaps, consumption windows, and current state.</p>
-    </header>
 
-    <div class="row g-3 mb-3">
-      <div class="col-12 col-xl-4">
-        <div class="card card-wtm h-100">
-          <div class="card-body">
-            <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-3">Device</h2>
-            <label for="deviceSelect" class="form-label small">Active device</label>
-            <select id="deviceSelect" class="form-select form-select-lg mb-3" aria-describedby="deviceHelp"></select>
-            <p id="deviceHelp" class="small text-wtm-muted mb-3">Choose a device from your allowlist (Admin). Data is loaded from your Firebase Realtime Database URL (see Admin).</p>
-            <div class="d-grid gap-2">
-              <button type="button" id="syncDevicesBtn" class="btn btn-wtm-primary">Sync devices from Firebase</button>
-              <button type="button" id="refreshBtn" class="btn btn-wtm-accent">Refresh report</button>
+    <!-- ===================== LIVE TANK HERO ===================== -->
+    <section class="hero-grid reveal mb-3" aria-label="Live tank status">
+      <div class="card card-wtm hero-tank-card">
+        <div class="card-body">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+            <div>
+              <h1 class="h6 text-uppercase letter-spacing text-wtm-muted mb-1">Live tank</h1>
+              <p class="mb-0 fw-bold text-wtm-strong" id="tankTitle">—</p>
+            </div>
+            <span class="status-pill" id="statusPill">—</span>
+          </div>
+
+          <div class="tank-stage">
+            <canvas id="tankCanvas" aria-label="Animated water tank"></canvas>
+            <div class="tank-readout">
+              <span class="tank-pct"><span id="tankPct">0</span><small>%</small></span>
+              <span class="tank-sub" id="tankSub">— cm water</span>
+              <span class="tank-vol" id="tankVol">— L</span>
+            </div>
+            <div class="tank-trend" id="tankTrend" hidden>
+              <span class="trend-arrow" id="trendArrow">→</span>
+              <span id="trendText">Steady</span>
+            </div>
+          </div>
+
+          <div class="tank-facts">
+            <div class="tank-fact">
+              <span class="tank-fact-k">Water column</span>
+              <span class="tank-fact-v" id="factHeight">—</span>
+            </div>
+            <div class="tank-fact">
+              <span class="tank-fact-k">Air gap</span>
+              <span class="tank-fact-v" id="factDistance">—</span>
+            </div>
+            <div class="tank-fact">
+              <span class="tank-fact-k">Tank height</span>
+              <span class="tank-fact-v" id="factTankHeight">—</span>
+            </div>
+            <div class="tank-fact">
+              <span class="tank-fact-k">Updated</span>
+              <span class="tank-fact-v" id="factUpdated">—</span>
             </div>
           </div>
         </div>
       </div>
-      <div class="col-12 col-xl-8">
-        <div class="card card-wtm h-100">
-          <div class="card-body">
-            <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-3">Report range</h2>
-            <div class="row g-2 g-md-3">
-              <div class="col-12 col-sm-6 col-md-4">
-                <label for="reportMode" class="form-label small">Report type</label>
-                <select id="reportMode" class="form-select">
-                  <option value="single" selected>Single date</option>
-                  <option value="week">Last 7 days (known)</option>
-                  <option value="custom">Custom range</option>
-                </select>
-              </div>
-              <div class="col-12 col-sm-6 col-md-4 mode-single">
-                <label for="dateSelect" class="form-label small">Date</label>
-                <select id="dateSelect" class="form-select"></select>
-              </div>
-              <div class="col-12 col-sm-6 col-md-4 mode-custom">
-                <label for="fromDate" class="form-label small">From</label>
-                <select id="fromDate" class="form-select"></select>
-              </div>
-              <div class="col-12 col-sm-6 col-md-4 mode-custom">
-                <label for="toDate" class="form-label small">To</label>
-                <select id="toDate" class="form-select"></select>
-              </div>
-              <div class="col-6 col-md-4">
-                <label for="changeThreshold" class="form-label small">Fill / change threshold (%)</label>
-                <input id="changeThreshold" type="number" min="0.1" max="100" step="0.1" value="2" class="form-control">
-              </div>
-              <div class="col-6 col-md-4">
-                <label for="windowSize" class="form-label small">Smoothing</label>
-                <select id="windowSize" class="form-select">
-                  <option value="1">Raw</option>
-                  <option value="3" selected>3-point</option>
-                  <option value="5">5-point</option>
-                </select>
-              </div>
-              <div class="col-6 col-md-4">
-                <label for="startTime" class="form-label small">Day start</label>
-                <input id="startTime" type="time" value="00:00" class="form-control">
-              </div>
-              <div class="col-6 col-md-4">
-                <label for="endTime" class="form-label small">Day end</label>
-                <input id="endTime" type="time" value="23:59" class="form-control">
-              </div>
-              <div class="col-12 col-md-8">
-                <label for="chartType" class="form-label small">Chart</label>
-                <select id="chartType" class="form-select">
-                  <option value="level" selected>Level (stepped — holds between samples)</option>
-                  <option value="distance">Distance to surface (cm)</option>
-                  <option value="rate">Change rate (% / min)</option>
-                  <option value="hourly">Hourly consumption</option>
-                  <option value="gaps">Intervals between uploads</option>
-                  <option value="pie">Activity split</option>
-                </select>
-              </div>
+
+      <div class="card card-wtm hero-gauge-card">
+        <div class="card-body d-flex flex-column">
+          <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-2">Capacity gauge</h2>
+          <div class="gauge-wrap"><canvas id="gaugeChart"></canvas></div>
+          <div class="gauge-legend" id="gaugeLegend"></div>
+        </div>
+      </div>
+
+      <div class="card card-wtm hero-vitals-card">
+        <div class="card-body">
+          <h2 class="h6 text-uppercase letter-spacing text-wtm-muted mb-2">Right now</h2>
+          <div class="vitals" id="vitals"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CONTROLS ===================== -->
+    <section class="card card-wtm mb-3 reveal" aria-label="Report controls">
+      <div class="card-body">
+        <div class="row g-2 g-md-3 align-items-end">
+          <div class="col-12 col-md-6 col-xl-3">
+            <label for="deviceSelect" class="form-label small">Device</label>
+            <select id="deviceSelect" class="form-select"></select>
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="reportMode" class="form-label small">Range</label>
+            <select id="reportMode" class="form-select">
+              <option value="single" selected>Single day</option>
+              <option value="week">Last 7 days</option>
+              <option value="month">Last 30 days</option>
+              <option value="all">All history</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3 col-xl-2 mode-single">
+            <label for="dateSelect" class="form-label small">Date</label>
+            <select id="dateSelect" class="form-select"></select>
+          </div>
+          <div class="col-6 col-md-3 col-xl-2 mode-custom">
+            <label for="fromDate" class="form-label small">From</label>
+            <select id="fromDate" class="form-select"></select>
+          </div>
+          <div class="col-6 col-md-3 col-xl-2 mode-custom">
+            <label for="toDate" class="form-label small">To</label>
+            <select id="toDate" class="form-select"></select>
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="capacityInput" class="form-label small">Tank capacity (L)</label>
+            <input id="capacityInput" type="number" min="1" step="1" value="1000" class="form-control">
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="changeThreshold" class="form-label small">Event size (%)</label>
+            <input id="changeThreshold" type="number" min="0.1" max="100" step="0.1" value="2" class="form-control">
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="lowThreshold" class="form-label small">Low alert (%)</label>
+            <input id="lowThreshold" type="number" min="1" max="99" step="1" value="20" class="form-control">
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="startTime" class="form-label small">Day start</label>
+            <input id="startTime" type="time" value="00:00" class="form-control">
+          </div>
+          <div class="col-6 col-md-3 col-xl-2">
+            <label for="endTime" class="form-label small">Day end</label>
+            <input id="endTime" type="time" value="23:59" class="form-control">
+          </div>
+          <div class="col-12 col-xl-4">
+            <div class="d-flex gap-2">
+              <button type="button" id="syncDevicesBtn" class="btn btn-wtm-primary flex-fill">Sync from Firebase</button>
+              <button type="button" id="refreshBtn" class="btn btn-outline-wtm flex-fill">Rebuild report</button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </section>
+
+    <div id="kpiStrip" class="mb-3 reveal" aria-label="Report summary"></div>
+    <div class="alert alert-wtm-info small mb-3" id="sparseNote" role="status" hidden></div>
 
     <ul class="nav nav-tabs nav-wtm mb-3" id="mainTabs" role="tablist">
       <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="tab-overview-btn" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-device-btn" data-bs-toggle="tab" data-bs-target="#tab-device" type="button" role="tab">Device details</button>
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-events" type="button" role="tab">Fill &amp; empty</button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-logs-btn" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">Logs</button>
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analytics" type="button" role="tab">Analytics</button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-errors-btn" data-bs-toggle="tab" data-bs-target="#tab-errors" type="button" role="tab">Errors</button>
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-device" type="button" role="tab">Device</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">Logs</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-errors" type="button" role="tab">Errors</button>
       </li>
     </ul>
 
     <div class="tab-content" id="mainTabContent">
-      <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
-        <div class="alert alert-wtm-info small mb-2 mb-md-3" id="sparseNote" role="status" hidden></div>
-        <div id="kpiStrip" class="mb-2 mb-md-3" aria-label="Report summary"></div>
 
-        <section class="chart-hero-wrap mb-3" aria-label="Selected chart">
-          <div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-2">
-            <h2 class="h5 fw-bold text-wtm-strong mb-0" id="heroChartHeading">Water level (%)</h2>
-            <span class="small text-wtm-soft">Use the Chart control in Report range to switch this view.</span>
-          </div>
-          <div class="card card-wtm chart-hero-card panel-chart" id="panel-level">
-            <div class="card-body">
-              <div class="chart-wrap chart-wrap-hero"><canvas id="levelChart"></canvas></div>
+      <!-- ===================== OVERVIEW ===================== -->
+      <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+        <div class="card card-wtm mb-3 reveal">
+          <div class="card-body">
+            <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+              <div>
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Water level story</h2>
+                <p class="small text-wtm-soft mb-0">Green stretches are refills, red stretches are consumption. Flat sections mean the level held steady between uploads.</p>
+              </div>
+              <div class="chart-legend-inline">
+                <span class="lg-item"><i class="lg-swatch lg-fill"></i>Filling</span>
+                <span class="lg-item"><i class="lg-swatch lg-drain"></i>Draining</span>
+                <span class="lg-item"><i class="lg-swatch lg-idle"></i>Idle</span>
+              </div>
             </div>
+            <div class="chart-wrap chart-wrap-hero"><canvas id="timelineChart"></canvas></div>
           </div>
-          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-distance">
-            <div class="card-body">
-              <p class="small text-wtm-soft mb-2">Lower distance usually means more water under the sensor.</p>
-              <div class="chart-wrap chart-wrap-hero"><canvas id="distanceChart"></canvas></div>
-            </div>
-          </div>
-          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-rate">
-            <div class="card-body">
-              <div class="chart-wrap chart-wrap-hero"><canvas id="rateChart"></canvas></div>
-            </div>
-          </div>
-          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-hourly">
-            <div class="card-body">
-              <div class="chart-wrap chart-wrap-hero"><canvas id="hourlyChart"></canvas></div>
-            </div>
-          </div>
-          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-gaps">
-            <div class="card-body">
-              <p class="small text-wtm-soft mb-2">Longer bars mean more time passed before the next upload (unchanged level).</p>
-              <div class="chart-wrap chart-wrap-hero"><canvas id="gapsChart"></canvas></div>
-            </div>
-          </div>
-          <div class="card card-wtm chart-hero-card panel-chart hidden" id="panel-pie">
-            <div class="card-body">
-              <div class="chart-wrap chart-wrap-hero chart-wrap-pie"><canvas id="activityPieChart"></canvas></div>
-            </div>
-          </div>
-        </section>
+        </div>
 
         <div class="row g-3 mb-3">
-          <div class="col-12 col-lg-6">
-            <div class="card card-wtm h-100">
+          <div class="col-12 col-xl-7">
+            <div class="card card-wtm h-100 reveal">
               <div class="card-body">
-                <h2 class="h6 fw-bold text-wtm-strong mb-1">Largest water drops (consumption)</h2>
-                <p class="small text-wtm-soft mb-2 mb-lg-3">Each bar is one step between two readings: level fell by this amount, ending at the time on the label.</p>
-                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topDrainsChart"></canvas></div>
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Consumption by hour of day</h2>
+                <p class="small text-wtm-soft mb-2">When your household actually uses water, summed across the selected range.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="hourlyChart"></canvas></div>
               </div>
             </div>
           </div>
-          <div class="col-12 col-lg-6">
-            <div class="card card-wtm h-100">
+          <div class="col-12 col-xl-5">
+            <div class="card card-wtm h-100 reveal">
               <div class="card-body">
-                <h2 class="h6 fw-bold text-wtm-strong mb-1">Largest rises (refill / gain)</h2>
-                <p class="small text-wtm-soft mb-2 mb-lg-3">Each bar is a level increase between two uploads—often a fill or recovery.</p>
-                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topFillsChart"></canvas></div>
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Where the water went</h2>
+                <p class="small text-wtm-soft mb-2">Split of consumption across parts of the day.</p>
+                <div class="chart-wrap chart-wrap-pie"><canvas id="todPieChart"></canvas></div>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="card card-wtm mb-3">
+        <div class="card card-wtm insight-card mb-3 reveal">
           <div class="card-body">
-            <h2 class="h6 fw-bold text-wtm-strong mb-1">Running totals in this window</h2>
-            <p class="small text-wtm-soft mb-2 mb-lg-3">Cumulative sum of all level drops (consumed) vs all rises (filled), from the first to the last sample.</p>
-            <div class="chart-wrap chart-wrap-cumulative"><canvas id="cumulativeChart"></canvas></div>
-          </div>
-        </div>
-
-        <div class="card card-wtm insight-card mb-3">
-          <div class="card-body">
-            <h2 class="h6 fw-bold text-wtm-strong mb-3">Key insights</h2>
-            <ul id="insightList" class="mb-0 ps-3 insight-list"></ul>
+            <h2 class="h6 fw-bold text-wtm-strong mb-3">What this means</h2>
+            <ul id="insightList" class="mb-0 insight-list"></ul>
           </div>
         </div>
       </div>
 
+      <!-- ===================== FILL & EMPTY ===================== -->
+      <div class="tab-pane fade" id="tab-events" role="tabpanel">
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Refill events</h2>
+                <p class="small text-wtm-soft mb-2">Every time the tank gained water — when it started, how long it took, and how much came in.</p>
+                <div class="event-list" id="fillEvents"></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Emptying events</h2>
+                <p class="small text-wtm-soft mb-2">Continuous draw-down stretches — useful for spotting leaks and heavy-use windows.</p>
+                <div class="event-list" id="drainEvents"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-wtm mb-3 reveal">
+          <div class="card-body">
+            <h2 class="h6 fw-bold text-wtm-strong mb-1">Fill vs empty per interval</h2>
+            <p class="small text-wtm-soft mb-2">Each bar is the change between two consecutive readings — above the line is water coming in, below is water going out.</p>
+            <div class="chart-wrap chart-wrap-mid"><canvas id="flowChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Biggest refills</h2>
+                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topFillsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Biggest draw-downs</h2>
+                <div class="chart-wrap chart-wrap-spotlight"><canvas id="topDrainsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-wtm reveal">
+          <div class="card-body">
+            <h2 class="h6 fw-bold text-wtm-strong mb-1">Low-water episodes</h2>
+            <p class="small text-wtm-soft mb-2">Periods where the level sat at or below your low alert threshold.</p>
+            <div class="event-list" id="lowEvents"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== ANALYTICS ===================== -->
+      <div class="tab-pane fade" id="tab-analytics" role="tabpanel">
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-xl-7">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Daily balance</h2>
+                <p class="small text-wtm-soft mb-2">Water in vs water out for each day in range, with the closing level as a line.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="dailyChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-xl-5">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Activity split</h2>
+                <p class="small text-wtm-soft mb-2">Total filled vs consumed vs what stayed in the tank.</p>
+                <div class="chart-wrap chart-wrap-pie"><canvas id="activityDonut"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Usage rose</h2>
+                <p class="small text-wtm-soft mb-2">Consumption grouped into 3-hour blocks around the clock.</p>
+                <div class="chart-wrap chart-wrap-pie"><canvas id="roseChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Running totals</h2>
+                <p class="small text-wtm-soft mb-2">Cumulative water consumed vs filled across the window.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="cumulativeChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Sensor distance</h2>
+                <p class="small text-wtm-soft mb-2">Air gap between the sensor and the water surface — a sanity check on readings.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="distanceChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Reporting gaps</h2>
+                <p class="small text-wtm-soft mb-2">Minutes between uploads. Tall bars mean the device stayed quiet.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="gapsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== DEVICE ===================== -->
       <div class="tab-pane fade" id="tab-device" role="tabpanel">
         <div class="row g-3">
           <div class="col-12 col-lg-6">
@@ -248,6 +397,7 @@
         </div>
       </div>
 
+      <!-- ===================== LOGS ===================== -->
       <div class="tab-pane fade" id="tab-logs" role="tabpanel">
         <div class="card card-wtm">
           <div class="card-body p-0">
@@ -261,6 +411,7 @@
         </div>
       </div>
 
+      <!-- ===================== ERRORS ===================== -->
       <div class="tab-pane fade" id="tab-errors" role="tabpanel">
         <div class="card card-wtm">
           <div class="card-body p-0">
@@ -296,7 +447,11 @@
       <input id="firebaseBaseInput" type="url" class="form-control font-monospace mb-2" placeholder="https://waterlevelmonitor-95f66-default-rtdb.firebaseio.com" autocomplete="off">
       <p class="small text-wtm-muted mb-2">Use the <code>.firebaseio.com</code> root (same project as the <a href="https://console.firebase.google.com/project/waterlevelmonitor-95f66/database/waterlevelmonitor-95f66-default-rtdb/data" target="_blank" rel="noopener">Realtime Database console</a>), not the console page URL.</p>
       <button type="button" id="fetchFirebaseBtn" class="btn btn-wtm-primary w-100 mb-4">Fetch devices from Firebase</button>
-      <p class="small text-wtm-muted mb-0">The URL here must be the <strong>REST API root</strong> (ends with <code class="small">.firebaseio.com</code>), not the Firebase Console page. Google Sign-In can be added later.</p>
+      <div class="form-check form-switch mb-2">
+        <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+        <label class="form-check-label small" for="autoRefreshToggle">Auto-refresh every 60 seconds</label>
+      </div>
+      <p class="small text-wtm-muted mb-0">The URL here must be the <strong>REST API root</strong> (ends with <code class="small">.firebaseio.com</code>), not the Firebase Console page.</p>
     </div>
   </div>
 </body>
