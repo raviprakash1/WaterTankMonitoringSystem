@@ -6,7 +6,7 @@ This guide covers how to compile firmware, publish the `.bin` on GitHub, and tel
 
 Once provisioned with WiFi credentials:
 
-1. **WiFi stays sticky** — if the router drops, the ESP32 keeps retrying forever (soft reconnect → full `begin()` → periodic radio hard-reset). It does **not** open the setup AP again unless you clear WiFi (`/reconfigure` or portal reset). No power cycle should be required.
+1. **WiFi stays sticky** — if the router drops, the ESP32 waits with **no timeout** (retry every 0.5 s, radio hard-reset about every 30 s) until it reconnects. It does **not** open the setup AP again unless you clear WiFi (`/reconfigure` or portal reset). No power cycle should be required.
 2. **OTA check** — on boot (when online), after every WiFi reconnect, and every `ota_check_interval_min` minutes (default **5**).
 3. It reads Firebase `firmware` (device path first, then global), compares `latest_version` to its own `FW_VERSION`, downloads the binary from `url`, flashes, and reboots.
 
@@ -18,7 +18,7 @@ You only need to: bump version → build → push bin to GitHub → update Fireb
 
 - [Arduino CLI](https://arduino.github.io/arduino-cli/) (or Arduino IDE)
 - ESP32 board package: `esp32:esp32`
-- Library: **ArduinoJson** (v6 API used by the sketch)
+- Libraries: **ArduinoJson** (v6 API used by the sketch), **OneWire**, **DallasTemperature**
 - Git access to this repo
 - Firebase Realtime Database write access for the project  
   Root used by this repo:  
@@ -31,7 +31,7 @@ You only need to: bump version → build → push bin to GitHub → update Fireb
 In `code/WaterTankSensorSketch.ino`:
 
 ```cpp
-#define FW_VERSION "1.0.4"
+#define FW_VERSION "1.2.0"
 ```
 
 Use **semver** `MAJOR.MINOR.PATCH`. Devices only OTA when Firebase `latest_version` is **numerically newer** than the running firmware.

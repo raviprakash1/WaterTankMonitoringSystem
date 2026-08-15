@@ -28,7 +28,8 @@ const refs = {
   tankVol: $("tankVol"), tankTitle: $("tankTitle"), statusPill: $("statusPill"),
   tankTrend: $("tankTrend"), trendArrow: $("trendArrow"), trendText: $("trendText"),
   factHeight: $("factHeight"), factDistance: $("factDistance"),
-  factTankHeight: $("factTankHeight"), factUpdated: $("factUpdated"),
+  factTankHeight: $("factTankHeight"), factTds: $("factTds"), factTemp: $("factTemp"),
+  factUpdated: $("factUpdated"),
   gaugeLegend: $("gaugeLegend"), vitals: $("vitals"),
   livePill: $("livePill"), livePillText: $("livePillText"),
   fillEvents: $("fillEvents"), drainEvents: $("drainEvents"), lowEvents: $("lowEvents")
@@ -132,7 +133,9 @@ function normalizeDayData(rawDay, dateKey) {
     timestamp: e.timestamp, dateKey,
     levelPercent: Number(e.level_percent),
     heightCm: Number(e.water_height_cm),
-    distanceCm: Number(e.distance_cm)
+    distanceCm: Number(e.distance_cm),
+    tdsPpm: Number(e.tds_ppm),
+    tempC: Number(e.temperature_c)
   })).filter((r) => r.timestamp && Number.isFinite(r.levelPercent))
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
@@ -259,6 +262,8 @@ function analyze(rows, eventThreshold, lowThreshold) {
   // Require a meaningful observation window before showing days remaining.
   const enoughForForecast = elapsedHours >= 6 && rows.length >= 8;
   const daysRemaining = enoughForForecast && usePerDay > 0 ? last.levelPercent / usePerDay : Infinity;
+  const tdsVals = rows.map((r) => r.tdsPpm).filter(Number.isFinite);
+  const tempVals = rows.map((r) => r.tempC).filter(Number.isFinite);
   return {
     first, last, steps, hourly, timeParts, totalFill, totalUse, fillRuns, drainRuns,
     lowEpisodes: detectLowEpisodes(rows, lowThreshold),
@@ -266,7 +271,15 @@ function analyze(rows, eventThreshold, lowThreshold) {
     avg: levels.reduce((a, b) => a + b, 0) / levels.length,
     trend: rows.length > 1 ? last.levelPercent - rows.at(-2).levelPercent : 0,
     gaps, gapLabels, medianGap: median(gaps), maxGap: gaps.length ? Math.max(...gaps) : 0,
-    daily: Object.values(daily), cumulative, usePerDay, daysRemaining, samples: rows.length
+    daily: Object.values(daily), cumulative, usePerDay, daysRemaining, samples: rows.length,
+    lastTds: Number.isFinite(last.tdsPpm) ? last.tdsPpm : NaN,
+    lastTemp: Number.isFinite(last.tempC) ? last.tempC : NaN,
+    avgTds: tdsVals.length ? tdsVals.reduce((a, b) => a + b, 0) / tdsVals.length : NaN,
+    avgTemp: tempVals.length ? tempVals.reduce((a, b) => a + b, 0) / tempVals.length : NaN,
+    minTds: tdsVals.length ? Math.min(...tdsVals) : NaN,
+    maxTds: tdsVals.length ? Math.max(...tdsVals) : NaN,
+    minTemp: tempVals.length ? Math.min(...tempVals) : NaN,
+    maxTemp: tempVals.length ? Math.max(...tempVals) : NaN
   };
 }
 function median(values) {
@@ -322,6 +335,10 @@ function renderLiveTank(device, analysis, tankHeight) {
   refs.factHeight.textContent = `${number(height)} cm`;
   refs.factDistance.textContent = `${number(distance)} cm`;
   refs.factTankHeight.textContent = `${number(tankHeight)} cm`;
+  const tds = Number(live.tds_ppm ?? fallback.tdsPpm);
+  const temp = Number(live.temperature_c ?? fallback.tempC);
+  refs.factTds.textContent = Number.isFinite(tds) ? `${number(tds)} ppm` : "—";
+  refs.factTemp.textContent = Number.isFinite(temp) ? `${number(temp)} °C` : "—";
   refs.factUpdated.textContent = relativeTime(updated);
 
   const state = pct <= low ? "Low" : pct >= 90 ? "Full" : pct >= 60 ? "Healthy" : pct >= 30 ? "Moderate" : "Watch";
@@ -348,7 +365,9 @@ function renderLiveTank(device, analysis, tankHeight) {
     ["Added in range", capacity ? `${Math.round(filledL).toLocaleString()} L` : `${number(analysis.totalFill)}%`, "refill"],
     ["Est. time left", forecast, "forecast"],
     ["Low-water events", String(analysis.lowEpisodes.length), "alert"],
-    ["Firmware", device.systeminfo?.firmware || device.tank_live?.firmware || "—", "firmware"]
+    ["Firmware", device.systeminfo?.firmware || device.tank_live?.firmware || "—", "firmware"],
+    ["TDS", Number.isFinite(tds) ? `${number(tds)} ppm` : "—", "water"],
+    ["Water temp", Number.isFinite(temp) ? `${number(temp)} °C` : "—", "forecast"]
   ].map(([k, v, icon]) => `<div class="vital"><span class="vital-icon vital-${icon}"></span><span><small>${esc(k)}</small><strong>${esc(v)}</strong></span></div>`).join("");
 }
 
@@ -443,10 +462,21 @@ function renderKpis(a, dateCaption) {
     ["Filled", capacity ? `${Math.round(litersFromPct(a.totalFill)).toLocaleString()} L` : `${number(a.totalFill)}%`, "good"],
     ["Refills", String(a.fillRuns.length), "good"],
     ["Low episodes", String(a.lowEpisodes.length), a.lowEpisodes.length ? "danger" : "neutral"],
-    ["Readings", String(a.samples), "neutral"]
+    ["Readings", String(a.samples), "neutral"],
+    ["TDS now", Number.isFinite(a.lastTds) ? `${number(a.lastTds)} ppm` : "—", "neutral"],
+    ["Temp now", Number.isFinite(a.lastTemp) ? `${number(a.lastTemp)} °C` : "—", "neutral"]
   ];
   refs.kpiStrip.innerHTML = `<div class="kpi-grid">${items.map(([k, v, tone]) =>
     `<div class="kpi-card card card-wtm kpi-${tone}"><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join("")}</div>`;
+}
+
+function downsampleRows(rows, maxPoints = 720) {
+  if (rows.length <= maxPoints) return rows;
+  const step = Math.ceil(rows.length / maxPoints);
+  const out = [];
+  for (let i = 0; i < rows.length; i += step) out.push(rows[i]);
+  if (out.at(-1) !== rows.at(-1)) out.push(rows.at(-1));
+  return out;
 }
 
 function renderTimeline(rows) {
@@ -480,7 +510,8 @@ function renderTimeline(rows) {
 
 function renderCharts(rows, a) {
   const c = chartColors();
-  renderTimeline(rows);
+  const plotted = downsampleRows(rows);
+  renderTimeline(plotted);
   makeChart("hourly", "hourlyChart", {
     type: "bar", data: { labels: a.hourly.map((_, h) => `${String(h).padStart(2, "0")}:00`), datasets: [{
       label: "Consumed %", data: a.hourly, backgroundColor: a.hourly.map((v) => v ? `${c.red}c8` : `${c.grid}35`), borderRadius: 6
@@ -519,9 +550,21 @@ function renderCharts(rows, a) {
     ] }, options: baseOptions("Cumulative %")
   });
   makeChart("distance", "distanceChart", {
-    type: "line", data: { labels: rows.map((r) => formatTime(r.timestamp)), datasets: [{
-      label: "Air gap cm", data: rows.map((r) => r.distanceCm), borderColor: c.purple, backgroundColor: `${c.purple}18`, fill: true, pointRadius: 1, tension: .2
+    type: "line", data: { labels: plotted.map((r) => formatTime(r.timestamp)), datasets: [{
+      label: "Air gap cm", data: plotted.map((r) => r.distanceCm), borderColor: c.purple, backgroundColor: `${c.purple}18`, fill: true, pointRadius: 1, tension: .2
     }] }, options: baseOptions("Distance cm", { beginAtZero: false })
+  });
+  makeChart("tds", "tdsChart", {
+    type: "line", data: { labels: plotted.map((r) => formatTime(r.timestamp)), datasets: [{
+      label: "TDS ppm", data: plotted.map((r) => Number.isFinite(r.tdsPpm) ? r.tdsPpm : null),
+      borderColor: c.amber, backgroundColor: `${c.amber}22`, fill: true, pointRadius: 1, spanGaps: true, tension: .2
+    }] }, options: baseOptions("TDS ppm", { beginAtZero: true })
+  });
+  makeChart("temp", "tempChart", {
+    type: "line", data: { labels: plotted.map((r) => formatTime(r.timestamp)), datasets: [{
+      label: "Temperature °C", data: plotted.map((r) => Number.isFinite(r.tempC) ? r.tempC : null),
+      borderColor: c.green, backgroundColor: `${c.green}22`, fill: true, pointRadius: 1, spanGaps: true, tension: .2
+    }] }, options: baseOptions("Temperature °C", { beginAtZero: false })
   });
   makeChart("gaps", "gapsChart", {
     type: "bar", data: { labels: a.gapLabels, datasets: [{
@@ -597,7 +640,12 @@ function renderInsights(a, caption) {
     { tone: "fill", title: "Refilling", text: biggestFill ? `${a.fillRuns.length} refill event(s) detected. The largest added ${number(biggestFill.percent)}% (about ${Math.round(biggestFill.liters).toLocaleString()} L) starting ${formatDateTime(biggestFill.from)}.` : "No significant refill was detected." },
     { tone: "alert", title: "Low-water risk", text: a.lowEpisodes.length ? `The tank entered the low zone ${a.lowEpisodes.length} time(s), reaching ${number(a.min)}%. Consider scheduling refills before the most common high-use period.` : `The tank stayed above the ${number(refs.lowThreshold.value, 0)}% low-water threshold.` },
     { tone: "forecast", title: "Simple forecast", text: Number.isFinite(a.daysRemaining) ? `At the observed average use rate, the current water may last about ${number(a.daysRemaining, 1)} days. This is an estimate and changes with household use and refills.` : "There is not enough consumption data to estimate days remaining." },
-    { tone: "data", title: "Data quality", text: `${a.samples} readings were analyzed. Typical reporting gap was ${durationText(a.medianGap)}; the longest was ${durationText(a.maxGap)}.` }
+    { tone: "data", title: "Data quality", text: `${a.samples} readings were analyzed. Typical reporting gap was ${durationText(a.medianGap)}; the longest was ${durationText(a.maxGap)}.` },
+    { tone: "info", title: "Water quality", text: [
+      Number.isFinite(a.lastTds) ? `Latest TDS is ${number(a.lastTds)} ppm` : "TDS is not in this range",
+      Number.isFinite(a.avgTds) ? `(average ${number(a.avgTds)} ppm)` : "",
+      Number.isFinite(a.lastTemp) ? `latest water temperature is ${number(a.lastTemp)} °C` : "temperature was not reported"
+    ].filter(Boolean).join("; ") + "." }
   ];
   refs.insightList.innerHTML = items.map((i) => `<li class="insight-${i.tone}"><strong>${esc(i.title)}</strong><span>${esc(i.text)}</span></li>`).join("");
   refs.sparseNote.hidden = a.maxGap <= 90;
@@ -605,8 +653,10 @@ function renderInsights(a, caption) {
 }
 
 function flattenLog(obj) {
-  return Object.values(obj || {}).map((e) => ({ time: e.time || e.timestamp, type: e.type || "—", message: e.message || "" }))
-    .filter((e) => e.time).sort((a, b) => new Date(b.time) - new Date(a.time));
+  return Object.values(obj || {}).map((e) => ({
+    time: e.time || e.timestamp, type: e.type || "—", message: e.message || "",
+    tds: e.tds_ppm, temp: e.temperature_c
+  })).filter((e) => e.time).sort((a, b) => new Date(b.time) - new Date(a.time));
 }
 function renderDeviceTab(device) {
   const makeDl = (obj) => Object.entries(obj || {}).map(([k, v]) =>
@@ -615,8 +665,8 @@ function renderDeviceTab(device) {
   refs.configDl.innerHTML = makeDl(device.config);
   refs.firmwarePre.textContent = JSON.stringify(device.firmware || {}, null, 2);
   const renderRows = (rows, empty) => rows.length ? rows.map((r) =>
-    `<tr><td class="text-nowrap">${formatDateTime(r.time)}</td><td><span class="badge bg-info text-dark">${esc(r.type)}</span></td><td>${esc(r.message)}</td></tr>`).join("")
-    : `<tr><td colspan="3" class="text-wtm-muted px-3 py-4">${empty}</td></tr>`;
+    `<tr><td class="text-nowrap">${formatDateTime(r.time)}</td><td><span class="badge bg-info text-dark">${esc(r.type)}</span></td><td>${esc(r.message)}</td><td>${Number.isFinite(Number(r.tds)) ? `${number(Number(r.tds))} ppm` : "—"}</td><td>${Number.isFinite(Number(r.temp)) ? `${number(Number(r.temp))} °C` : "—"}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="text-wtm-muted px-3 py-4">${empty}</td></tr>`;
   refs.logsBody.innerHTML = renderRows(flattenLog(device.logs), "No logs.");
   refs.errorsBody.innerHTML = renderRows(flattenLog(device.errors), "No errors.");
 }

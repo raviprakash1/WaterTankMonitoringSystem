@@ -1,0 +1,10 @@
+{
+  "tank_height": 160,
+  "interval_sec": 1,
+  "interval_min": 5,
+  "threshold": 2,
+  "min_valid_distance": 20,
+  "tank_name": "",
+  "ota_check_interval_min": 5,
+  "quality_enabled": true
+}

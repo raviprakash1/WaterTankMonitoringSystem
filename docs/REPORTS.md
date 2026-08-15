@@ -122,13 +122,16 @@ Chart colors follow **CSS variables** (`--chart-accent`, etc.) so they track the
 
 The app expects each device document to include at least:
 
-- `history`: object whose keys match **`dd-mm-yyyy`** and values are maps of time-key → `{ timestamp, level_percent, water_height_cm, distance_cm }` (as written by the ESP32 sketch).
+- `history`: object whose keys match **`dd-mm-yyyy`** and values are maps of time-key → `{ timestamp, level_percent, water_height_cm, distance_cm, tds_ppm, temperature_c }`.
+- `tank_live`: latest `{ level_percent, water_height_cm, distance_cm, tds_ppm, temperature_c, updated_at, firmware }`.
 
 Optional but used when present:
 
-- `bootstrap` — `tank_name`, `tank_height_cm`, `threshold`, …
-- `config` — overrides, e.g. `tank_height`, `threshold`
-- `logs`, `errors`, `firmware`
+- `bootstrap` — `tank_name`, `tank_height_cm`, `interval_sec`, `threshold`, …
+- `config` — source of truth on device: `tank_height`, `interval_sec`, `threshold`, `min_valid_distance`, `tank_name`, `ota_check_interval_min`
+- `logs`, `errors`, `firmware` — log rows may include `tds_ppm` / `temperature_c`
+
+Overview charts plot **water level**, **TDS (ppm)**, and **water temperature (°C)**. KPI chips show current TDS and temp. Logs table has TDS and Temp columns.
 
 ## Themes
 
