@@ -85,6 +85,14 @@
               <span class="tank-fact-v" id="factTankHeight">—</span>
             </div>
             <div class="tank-fact">
+              <span class="tank-fact-k">TDS</span>
+              <span class="tank-fact-v" id="factTds">—</span>
+            </div>
+            <div class="tank-fact">
+              <span class="tank-fact-k">Temperature</span>
+              <span class="tank-fact-v" id="factTemp">—</span>
+            </div>
+            <div class="tank-fact">
               <span class="tank-fact-k">Updated</span>
               <span class="tank-fact-v" id="factUpdated">—</span>
             </div>
@@ -210,6 +218,27 @@
               </div>
             </div>
             <div class="chart-wrap chart-wrap-hero"><canvas id="timelineChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">TDS (water quality)</h2>
+                <p class="small text-wtm-soft mb-2">Total dissolved solids in ppm from the analog TDS probe. Typical drinking water is often 50–500 ppm.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="tdsChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-xl-6">
+            <div class="card card-wtm h-100 reveal">
+              <div class="card-body">
+                <h2 class="h6 fw-bold text-wtm-strong mb-1">Water temperature</h2>
+                <p class="small text-wtm-soft mb-2">DS18B20 probe temperature. Used to compensate TDS to 25 °C. Gaps mean the probe was not detected.</p>
+                <div class="chart-wrap chart-wrap-mid"><canvas id="tempChart"></canvas></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -403,7 +432,7 @@
           <div class="card-body p-0">
             <div class="table-responsive">
               <table class="table table-wtm table-hover mb-0">
-                <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+                <thead><tr><th>Time</th><th>Type</th><th>Message</th><th>TDS</th><th>Temp</th></tr></thead>
                 <tbody id="logsBody"></tbody>
               </table>
             </div>
@@ -417,7 +446,7 @@
           <div class="card-body p-0">
             <div class="table-responsive">
               <table class="table table-wtm table-hover mb-0">
-                <thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>
+                <thead><tr><th>Time</th><th>Type</th><th>Message</th><th>TDS</th><th>Temp</th></tr></thead>
                 <tbody id="errorsBody"></tbody>
               </table>
             </div>
